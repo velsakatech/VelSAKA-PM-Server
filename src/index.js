@@ -17,9 +17,9 @@ import projectDocumentRoutes from "./routes/projectDocumentRoutes.js";
 
 import User from "./models/User.js";
 import Notification from "./models/Notification.js";
+// import ChatMessage from "./models/ChatMessage.js";
 
 const app = express();
-
 const server = http.createServer(app);
 
 // =========================================================
@@ -27,27 +27,49 @@ const server = http.createServer(app);
 // =========================================================
 
 const __filename = fileURLToPath(import.meta.url);
-
 const __dirname = path.dirname(__filename);
 
 // =========================================================
 // CONFIG
 // =========================================================
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-
 const PORT = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://vel-saka-pm.vercel.app",
+];
+
 // =========================================================
-// MIDDLEWARE
+// CORS
 // =========================================================
 
-app.use(
-  cors({
-    origin: FRONTEND_URL,
-    credentials: true,
-  }),
-);
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests without an Origin header
+    // such as server-to-server requests / health checks.
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("CORS BLOCKED ORIGIN:", origin);
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+
+  credentials: true,
+};
+
+// REST API CORS
+app.use(cors(corsOptions));
+
+// =========================================================
+// BODY PARSER
+// =========================================================
 
 app.use(express.json());
 
@@ -84,7 +106,7 @@ app.use("/api/project-documents", projectDocumentRoutes);
 app.use("/api/admin", adminRoutes);
 
 // =========================================================
-// BASIC HEALTH CHECK
+// HEALTH CHECK
 // =========================================================
 
 app.get("/api/health", (req, res) => {
@@ -100,7 +122,7 @@ app.get("/api/health", (req, res) => {
 
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -114,11 +136,8 @@ const io = new Server(server, {
 
 io.on("connection", (socket) => {
   console.log("=================================");
-
   console.log("SOCKET CLIENT CONNECTED");
-
   console.log("Socket ID:", socket.id);
-
   console.log("=================================");
 
   // =======================================================
@@ -128,7 +147,6 @@ io.on("connection", (socket) => {
   socket.on("join_user", (userId) => {
     if (!userId) {
       console.log("join_user called without userId");
-
       return;
     }
 
@@ -137,7 +155,6 @@ io.on("connection", (socket) => {
     socket.join(room);
 
     console.log(`User ${room} joined room`);
-
     console.log("Socket ID:", socket.id);
 
     socket.emit("joined_user", {
@@ -152,18 +169,17 @@ io.on("connection", (socket) => {
 
   socket.on("send_message", async (payload, callback) => {
     try {
-      const { senderId, receiverId, message } = payload || {};
+      const {
+        senderId,
+        receiverId,
+        message,
+      } = payload || {};
 
       console.log("=================================");
-
       console.log("SOCKET SEND MESSAGE");
-
       console.log("Sender:", senderId);
-
       console.log("Receiver:", receiverId);
-
       console.log("Message:", message);
-
       console.log("=================================");
 
       // -------------------------------------------------
@@ -231,47 +247,33 @@ io.on("connection", (socket) => {
       // SAVE MESSAGE
       // -------------------------------------------------
 
-      const newMessage = await ChatMessage.create({
-        senderId,
-        receiverId,
-        message: message.trim(),
-        read: false,
-      });
+      /*
+        IMPORTANT:
+        ChatMessage must be imported before this is enabled.
 
-      // -------------------------------------------------
-      // POPULATE MESSAGE
-      // -------------------------------------------------
+        Example:
 
-      const populatedMessage = await ChatMessage.findById(newMessage._id)
-        .populate("senderId", "name email accessRole jobRole")
-        .populate("receiverId", "name email accessRole jobRole");
+        import ChatMessage from "./models/ChatMessage.js";
 
-      // -------------------------------------------------
-      // SEND TO SENDER
-      // -------------------------------------------------
+        const newMessage = await ChatMessage.create({
+          senderId,
+          receiverId,
+          message: message.trim(),
+          read: false,
+        });
+      */
 
-      io.to(String(senderId)).emit("message_sent", populatedMessage);
-
-      // -------------------------------------------------
-      // SEND TO RECEIVER
-      // -------------------------------------------------
-
-      io.to(String(receiverId)).emit("new_message", populatedMessage);
-
-      // -------------------------------------------------
-      // ACKNOWLEDGEMENT
-      // -------------------------------------------------
-
-      const successResponse = {
-        success: true,
-        message: populatedMessage,
+      const errorResponse = {
+        success: false,
+        message: "Chat message model is not configured yet.",
       };
 
+      socket.emit("message_error", errorResponse);
+
       if (typeof callback === "function") {
-        callback(successResponse);
+        callback(errorResponse);
       }
 
-      console.log("MESSAGE SAVED + DELIVERED");
     } catch (error) {
       console.error("SOCKET SEND MESSAGE ERROR:", error);
 
@@ -294,13 +296,9 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", (reason) => {
     console.log("=================================");
-
     console.log("SOCKET DISCONNECTED");
-
     console.log("Socket ID:", socket.id);
-
     console.log("Reason:", reason);
-
     console.log("=================================");
   });
 });
@@ -311,6 +309,13 @@ io.on("connection", (socket) => {
 
 app.use((error, req, res, next) => {
   console.error("GLOBAL SERVER ERROR:", error);
+
+  if (error?.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      success: false,
+      message: "CORS origin not allowed.",
+    });
+  }
 
   if (error?.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
@@ -336,18 +341,11 @@ app.use((error, req, res, next) => {
 // START SERVER
 // =========================================================
 
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-
-  console.log(`Socket.IO running on http://localhost:${PORT}`);
-
-  console.log(`Project uploads available at http://localhost:${PORT}/uploads`);
-});
-
-
-app.get("/api/health", (req, res) => {
-  return res.status(200).json({
-    success: true,
-    message: "VELSAKA PM API is running.",
-  });
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("=================================");
+  console.log(`VELSAKA PM SERVER RUNNING`);
+  console.log(`PORT: ${PORT}`);
+  console.log("ALLOWED ORIGINS:");
+  console.log(allowedOrigins);
+  console.log("=================================");
 });
