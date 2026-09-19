@@ -343,3 +343,11 @@ server.listen(PORT, () => {
 
   console.log(`Project uploads available at http://localhost:${PORT}/uploads`);
 });
+
+
+app.get("/api/health", (req, res) => {
+  return res.status(200).json({
+    success: true,
+    message: "VELSAKA PM API is running.",
+  });
+});
